@@ -1,0 +1,96 @@
+[
+  {
+    "id": 1,
+    "name": "Malbec Reserva 2021",
+    "description": "Un vino intenso y frutal, con 12 meses en barrica de roble francés.",
+    "price": 20,
+    "sku": "VIN-MAL-RES-001",
+    "category": "Vino Tinto",
+    "images": [
+      "/images/C.Sauvignon.png"
+    ],
+    "long_description": "Nuestro Malbec Reserva es la máxima expresión de nuestro terroir. Cosechado a mano y seleccionado cuidadosamente, presenta notas de ciruela, cereza negra y un toque de vainilla aportado por su crianza en barrica. Ideal para acompañar carnes rojas y pastas.",
+    "additional_info": {
+      "weight": "1.4 kg",
+      "dimensions": "8 x 8 x 30 cm",
+      "extra": "Añada: 2021"
+    },
+    "stock": 150,
+    "pack_info": {
+      "pack_name": "Pack Degustación Tinto",
+      "pack_price": 110.00,
+      "pack_stock": 25,
+      "pack_description": "Un pack curado con 6 de nuestros mejores vinos tintos, ideal para descubrir la variedad de nuestro terroir. Incluye Malbec, Cabernet, Tannat y más.",
+      "pack_image": "/images/C.Sauvignon.png"
+    }
+  },
+  {
+    "id": 2,
+    "name": "Sauvignon Blanc 2022",
+    "description": "Fresco y cítrico, con notas herbales y una acidez vibrante.",
+    "price": 18.50,
+    "sku": "VIN-SAU-BLA-002",
+    "category": "Vino Blanco",
+    "images": ["/images/yaguarundi.png"],
+    "long_description": "Este Sauvignon Blanc captura la frescura de las mañanas en nuestros viñedos. Con aromas a pomelo, lima y un fondo de pasto recién cortado, es un vino ligero y refrescante, perfecto para mariscos, ensaladas o para disfrutar como aperitivo.",
+    "additional_info": {
+      "weight": "1.3 kg",
+      "dimensions": "7.5 x 7.5 x 30 cm",
+      "extra": "Temperatura de servicio: 8-10°C"
+    },
+    "stock": 220,
+    "pack_info": {
+      "pack_name": "Pack Degustación Tinto",
+      "pack_price": 110.00,
+      "pack_stock": 25,
+      "pack_description": "Un pack curado con 6 de nuestros mejores vinos tintos, ideal para descubrir la variedad de nuestro terroir. Incluye Malbec, Cabernet, Tannat y más.",
+      "pack_image": "/images/C.Sauvignon.png"
+    }
+  },
+  {
+    "id": 3,
+    "name": "Rosé de Pinot Noir",
+    "description": "Elegante y delicado, con aromas a fresas y flores blancas.",
+    "price": 21.00,
+    "sku": "VIN-ROS-PIN-003",
+    "category": "Vino Rosado",
+    "images": ["/images/tannat.png"],
+    "long_description": "Un rosado pálido y brillante elaborado 100% con uvas Pinot Noir. En boca es seco, con una acidez equilibrada y sabores que recuerdan a la frambuesa y la cereza. Un vino versátil que acompaña bien desde sushi hasta platos mediterráneos.",
+    "additional_info": {
+      "weight": "1.3 kg",
+      "dimensions": "7.5 x 7.5 x 30 cm",
+      "extra": "Vinificación: Prensado directo"
+    },
+    "stock": 0,
+    "pack_info": {
+      "pack_name": "Pack Degustación Tinto",
+      "pack_price": 110.00,
+      "pack_stock": 25,
+      "pack_description": "Un pack curado con 6 de nuestros mejores vinos tintos, ideal para descubrir la variedad de nuestro terroir. Incluye Malbec, Cabernet, Tannat y más.",
+      "pack_image": "/images/C.Sauvignon.png"
+    }
+  },
+  {
+    "id": 4,
+    "name": "Cabernet Gran Reserva",
+    "description": "Robusto y complejo, con taninos firmes y un largo final.",
+    "price": 35.00,
+    "sku": "VIN-CAB-GRS-004",
+    "category": "Vino Tinto",
+    "images": ["/images/taruca.png"],
+    "long_description": "La joya de nuestra bodega. Este Cabernet Sauvignon pasa 24 meses en barricas nuevas y al menos 12 meses en botella antes de su lanzamiento. Ofrece aromas a cassis, pimiento asado, tabaco y chocolate. Un vino de guarda con gran potencial.",
+    "additional_info": {
+      "weight": "1.5 kg",
+      "dimensions": "8 x 8 x 30 cm",
+      "extra": "Potencial de guarda: 10+ años"
+    },
+    "stock": 85,
+    "pack_info": {
+      "pack_name": "Pack Degustación Tinto",
+      "pack_price": 110.00,
+      "pack_stock": 25,
+      "pack_description": "Un pack curado con 6 de nuestros mejores vinos tintos, ideal para descubrir la variedad de nuestro terroir. Incluye Malbec, Cabernet, Tannat y más.",
+      "pack_image": "/images/C.Sauvignon.png"
+    }
+  }
+]

@@ -1,0 +1,27 @@
+services:
+
+  api:
+    profiles: ["prod"]
+    container_name: tienda_backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        PYTHON_VERSION: "3.12"
+    env_file:
+      - .env
+    volumes:
+      - ./tienda.db:/app/tienda.db
+      - ./static:/app/static
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/products || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nginx-proxymanager_proxy
+networks:
+  nginx-proxymanager_proxy:
+    external: true
