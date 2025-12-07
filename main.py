@@ -22,7 +22,7 @@ from models import Product, Cart
 from database import engine
 
 # Tus orígenes permitidos
-origins = ["https://amt-dcv.com", "http://localhost:5173"]
+origins = ["https://amt-dcv.com"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,13 +49,13 @@ def calculate_shipping_cost(cp_str: str) -> float:
     cp = int(cp_clean)
     
     if 1000 <= cp <= 1499:
-        return 3500.00 # CABA
+        return 100.00 # CABA
     elif 1500 <= cp <= 1999:
-        return 5800.00 # GBA
+        return 150.00 # GBA
     elif cp >= 2000 and cp < 9999:
-        return 8500.00 # Interior
+        return 120.00 # Interior
     else:
-        return 8500.00 # Default/Otros
+        return 120.00 # Default/Otros
 
 @app.get("/api/products", response_model=List[Product])
 def get_products(session: Session = Depends(get_session)):
@@ -72,9 +72,9 @@ def calculate_shipping(data: ShippingRequest):
     
     # Mensaje descriptivo simple
     message = "Costo de envío"
-    if cost == 3500: message = "Envío CABA"
-    elif cost == 5800: message = "Envío GBA"
-    elif cost == 8500: message = "Envío Nacional"
+    if cost == 100: message = "Envío CABA"
+    elif cost == 150: message = "Envío GBA"
+    elif cost == 120: message = "Envío Nacional"
 
     return {"cost": cost, "message": message}
 
