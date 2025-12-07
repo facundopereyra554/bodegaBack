@@ -10,10 +10,6 @@ from notifications import send_emails
 
 load_dotenv()
 
-print("--- INICIANDO SERVIDOR ---")
-print("--------------------------")
-
-
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
