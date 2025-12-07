@@ -12,7 +12,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./tienda.db:/app/tienda.db
       - ./static:/app/static
     restart: unless-stopped
     healthcheck:
