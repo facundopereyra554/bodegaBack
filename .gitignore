@@ -1,0 +1,41 @@
+# --- PYTHON / BACKEND ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales (¡Muy importante no subir esto!)
+venv/
+.venv/
+env/
+
+# Variables de entorno y secretos (CRÍTICO: AQUÍ ESTÁN TUS CLAVES)
+.env
+.env.local
+.env.*.local
+
+# Base de datos SQLite (Se genera con seed_database.py, no subir la binaria)
+*.db
+*.sqlite3
+tienda.db
+
+# Logs de Python
+*.log
+
+# --- NODE / REACT / FRONTEND ---
+# Dependencias de Node (¡Nunca subir esto, pesa gigas!)
+node_modules/
+
+# Logs de npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build de producción (Se genera con npm run build)
+dist/
+build/
+
+# Archivos temporales de Vite
+.vite/
+
+# --- SISTEMA OPERATIVO / IDE ---
+# Archivos basura de Mac/Wind
