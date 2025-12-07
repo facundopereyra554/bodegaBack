@@ -11,7 +11,6 @@ from notifications import send_emails
 load_dotenv()
 
 print("--- INICIANDO SERVIDOR ---")
-print(f"Mercado Pago Access Token: {os.getenv('MERCADOPAGO_ACCESS_TOKEN')}")
 print("--------------------------")
 
 
@@ -26,7 +25,9 @@ sdk = mercadopago.SDK(mp_access_token)
 from models import Product, Cart
 from database import engine
 
-origins = ["https://amt-dcv.com"]
+# Tus orígenes permitidos
+origins = ["https://amt-dcv.com", "http://localhost:5173"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -35,11 +36,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
 def get_session():
     with Session(engine) as session:
         yield session
+
+# --- FUNCIÓN AUXILIAR PARA CALCULAR ENVÍO (DRY) ---
+def calculate_shipping_cost(cp_str: str) -> float:
+    if not cp_str:
+        return 0.0
+    
+    # Limpiamos espacios y validamos que sea número
+    cp_clean = cp_str.strip()
+    if not cp_clean.isdigit():
+        return 0.0
+    
+    cp = int(cp_clean)
+    
+    if 1000 <= cp <= 1499:
+        return 3500.00 # CABA
+    elif 1500 <= cp <= 1999:
+        return 5800.00 # GBA
+    elif cp >= 2000 and cp < 9999:
+        return 8500.00 # Interior
+    else:
+        return 8500.00 # Default/Otros
 
 @app.get("/api/products", response_model=List[Product])
 def get_products(session: Session = Depends(get_session)):
@@ -49,39 +69,25 @@ def get_products(session: Session = Depends(get_session)):
 class ShippingRequest(SQLModel):
     zip_code: str
 
-
 @app.post("/api/calculate_shipping")
 def calculate_shipping(data: ShippingRequest):
-    cp_str = data.zip_code.strip()
-    if not cp_str.isdigit():
-        raise HTTPException(status_code=400, detail="El código postal debe contener solo números.")
+    # Usamos la función auxiliar
+    cost = calculate_shipping_cost(data.zip_code)
     
-    cp = int(cp_str)
-    cost = 0.0
-    message = ""
-    if 1000 <= cp <= 1499:
-        cost = 3500.00
-        message = "Envío CABA"
-        
-    elif 1500 <= cp <= 1999:
-        cost = 5800.00
-        message = "Envío GBA"
-        
-    elif cp >= 2000 and cp < 9999:
-        cost = 8500.00
-        message = "Envío Nacional (Correo)"
-        
-    else:
-        cost = 8500.00
-        message = "Envío Estándar"
+    # Mensaje descriptivo simple
+    message = "Costo de envío"
+    if cost == 3500: message = "Envío CABA"
+    elif cost == 5800: message = "Envío GBA"
+    elif cost == 8500: message = "Envío Nacional"
 
     return {"cost": cost, "message": message}
 
 @app.post("/api/create_preference")
 def create_preference(cart: Cart, session: Session = Depends(get_session)):
     preference_items = []
+    has_free_shipping = False # Bandera para detectar packs (envío gratis)
     
-    # 1. Recorremos el carrito para validar productos y stock
+    # 1. Recorremos el carrito para validar productos, stock y armar items
     for item_in_cart in cart.items:
         product = session.get(Product, item_in_cart.id)
         
@@ -103,6 +109,9 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
 
             title = product.pack_info.get("pack_name")
             unit_price = product.pack_info.get("pack_price")
+            
+            # ¡IMPORTANTE! Si compra un pack, activamos envío gratis
+            has_free_shipping = True
         else:
             # Verificamos el stock individual
             if product.stock < item_in_cart.quantity:
@@ -118,32 +127,45 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
     if not preference_items:
         raise HTTPException(status_code=400, detail="El carrito está vacío o contiene items inválidos.")
 
-    # 2. Preparamos la METADATA (Datos del usuario para el Webhook)
+    # 2. LÓGICA DE ENVÍO: Agregamos el costo como un ítem más
+    shipping_cost = 0.0
+    
+    # Si NO tiene envío gratis (no hay packs) Y nos mandaron un código postal
+    if not has_free_shipping and cart.zip_code:
+        shipping_cost = calculate_shipping_cost(cart.zip_code)
+        
+        if shipping_cost > 0:
+            preference_items.append({
+                "title": "Costo de Envío",
+                "quantity": 1,
+                "unit_price": shipping_cost,
+                "currency_id": "ARS"
+            })
+
+    # 3. Preparamos la METADATA (Datos del usuario para el Webhook)
     metadata = {}
     payer_info = {}
 
     if cart.user_data:
-        # Mercado Pago prefiere las keys en snake_case (sin mayúsculas tipo camelCase)
         metadata = {
             "name": cart.user_data.name,
             "last_name": cart.user_data.lastName,
             "email": cart.user_data.email,
             "whatsapp": cart.user_data.whatsapp,
-            "address": cart.user_data.address
+            "address": cart.user_data.address,
+            "zip_code": cart.zip_code
         }
         
-        # Información del pagador para Mercado Pago
         payer_info = {
             "name": cart.user_data.name,
             "surname": cart.user_data.lastName,
             "email": cart.user_data.email
         }
 
-    # 3. Armamos el objeto de preferencia completo
     preference_data = {
         "items": preference_items,
-        "payer": payer_info,     # <--- Agregamos datos del pagador
-        "metadata": metadata,    # <--- Agregamos la metadata para notificaciones
+        "payer": payer_info,
+        "metadata": metadata,
         "back_urls": {
             "success": "https://amt-dcv.com/pago-exitoso",
             "failure": "https://amt-dcv.com/pago-fallido",
@@ -153,23 +175,18 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
     }
 
     try:
-        # El SDK devuelve directamente el diccionario con los datos de la preferencia
         preference_response = sdk.preference().create(preference_data)
         
-        # Verificamos si la respuesta es la esperada antes de acceder a sus claves
         if preference_response and "response" in preference_response and "id" in preference_response["response"]:
             preference_id = preference_response["response"]["id"]
             return {"preference_id": preference_id}
         else:
-            # Si la respuesta no tiene la forma esperada, la imprimimos para depurar
             print("Respuesta inesperada de Mercado Pago:")
             print(preference_response)
             raise HTTPException(status_code=500, detail="Respuesta inesperada de Mercado Pago.")
 
     except Exception as e:
-        # Imprimimos el error específico para tener más detalles
         print(f"Error al crear la preferencia de MP: {e}")
-        # También es útil imprimir los datos que se enviaron
         print(f"Datos enviados a MP: {preference_data}")
         raise HTTPException(status_code=500, detail="Error al comunicarse con Mercado Pago.")
 
@@ -181,21 +198,18 @@ async def webhook_mercado_pago(request: Request):
         payment_id = params.get("id") or params.get("data.id")
 
         if topic == "payment" and payment_id:
-            # Consultamos el estado del pago a MP
             payment_info = sdk.payment().get(payment_id)
             payment = payment_info.get("response", {})
             
             status = payment.get("status")
             
             if status == "approved":
-                print(f"💰 PAGO APROBADO: ID {payment_id}")
+                print(f"PAGO APROBADO: ID {payment_id}")
                 
-                # Extraemos la data
                 metadata = payment.get("metadata", {})
                 items = payment.get("additional_info", {}).get("items", [])
                 total_paid = payment.get("transaction_amount", 0)
                 
-                # Disparamos los correos
                 print("Enviando correos...")
                 send_emails(metadata, items, total_paid)
 

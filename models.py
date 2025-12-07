@@ -7,7 +7,6 @@ class CartItem(SQLModel):
     quantity: int
     variant: Optional[str] = "individual"
 
-# --- NUEVA CLASE PARA LOS DATOS DEL CLIENTE ---
 class UserData(SQLModel):
     name: str
     lastName: str
@@ -15,14 +14,12 @@ class UserData(SQLModel):
     whatsapp: str
     address: str
 
-# --- ACTUALIZAMOS EL CART PARA INCLUIR USER_DATA ---
 class Cart(SQLModel):
     items: List[CartItem]
-    user_data: Optional[UserData] = None # Campo nuevo opcional
+    user_data: Optional[UserData] = None
+    zip_code: Optional[str] = None
 
-# ... (El resto, class Product, déjalo igual) ...
 class Product(SQLModel, table=True):
-    # ... tu código de Product ...
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     description: str
