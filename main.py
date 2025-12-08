@@ -81,9 +81,8 @@ def calculate_shipping(data: ShippingRequest):
 @app.post("/api/create_preference")
 def create_preference(cart: Cart, session: Session = Depends(get_session)):
     preference_items = []
-    has_free_shipping = False # Bandera para detectar packs (envío gratis)
+    has_free_shipping = False 
     
-    # 1. Recorremos el carrito para validar productos, stock y armar items
     for item_in_cart in cart.items:
         product = session.get(Product, item_in_cart.id)
         
@@ -92,28 +91,27 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
 
         title = product.name
         unit_price = product.price
+        item_id_string = f"IND|{product.id}" 
 
-        # Lógica para Packs vs Individual
         if item_in_cart.variant == "pack":
             if not product.pack_info:
                 raise HTTPException(status_code=400, detail=f"El producto {product.name} no tiene un pack.")
             
-            # Verificamos el stock del pack
             pack_stock = product.pack_info.get("pack_stock", 0)
             if pack_stock < item_in_cart.quantity:
-                raise HTTPException(status_code=400, detail=f"Stock insuficiente para el pack de {product.name}.")
+                raise HTTPException(status_code=400, detail=f"Stock insuficiente para el pack.")
 
             title = product.pack_info.get("pack_name")
             unit_price = product.pack_info.get("pack_price")
+            item_id_string = f"PACK|{product.id}" # Marcamos que es PACK
             
-            # ¡IMPORTANTE! Si compra un pack, activamos envío gratis
             has_free_shipping = True
         else:
-            # Verificamos el stock individual
             if product.stock < item_in_cart.quantity:
                 raise HTTPException(status_code=400, detail=f"Stock insuficiente para {product.name}.")
 
         preference_items.append({
+            "id": item_id_string,
             "title": title, 
             "quantity": item_in_cart.quantity,
             "unit_price": unit_price, 
@@ -121,24 +119,20 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
         })
 
     if not preference_items:
-        raise HTTPException(status_code=400, detail="El carrito está vacío o contiene items inválidos.")
+        raise HTTPException(status_code=400, detail="Carrito vacío.")
 
-    # 2. LÓGICA DE ENVÍO: Agregamos el costo como un ítem más
     shipping_cost = 0.0
-    
-    # Si NO tiene envío gratis (no hay packs) Y nos mandaron un código postal
     if not has_free_shipping and cart.zip_code:
         shipping_cost = calculate_shipping_cost(cart.zip_code)
-        
         if shipping_cost > 0:
             preference_items.append({
+                "id": "SHIP|0", # ID dummy para el envío
                 "title": "Costo de Envío",
                 "quantity": 1,
                 "unit_price": shipping_cost,
                 "currency_id": "ARS"
             })
 
-    # 3. Preparamos la METADATA (Datos del usuario para el Webhook)
     metadata = {}
     payer_info = {}
 
@@ -151,7 +145,6 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
             "address": cart.user_data.address,
             "zip_code": cart.zip_code
         }
-        
         payer_info = {
             "name": cart.user_data.name,
             "surname": cart.user_data.lastName,
@@ -168,23 +161,22 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
             "pending": "https://amt-dcv.com/pago-pendiente"
         },
         "auto_return": "approved",
+        # --- ¡AQUÍ ESTÁ LA SOLUCIÓN DEL EMAIL! ---
+        # Le decimos explícitamente a MP que avise a nuestro VPS
+        "notification_url": "https://ia.serv-node.dev/api/webhook" 
     }
 
     try:
         preference_response = sdk.preference().create(preference_data)
-        
         if preference_response and "response" in preference_response and "id" in preference_response["response"]:
-            preference_id = preference_response["response"]["id"]
-            return {"preference_id": preference_id}
+            return {"preference_id": preference_response["response"]["id"]}
         else:
-            print("Respuesta inesperada de Mercado Pago:")
-            print(preference_response)
-            raise HTTPException(status_code=500, detail="Respuesta inesperada de Mercado Pago.")
+            print("Error MP:", preference_response)
+            raise HTTPException(status_code=500, detail="Error MP")
 
     except Exception as e:
-        print(f"Error al crear la preferencia de MP: {e}")
-        print(f"Datos enviados a MP: {preference_data}")
-        raise HTTPException(status_code=500, detail="Error al comunicarse con Mercado Pago.")
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Error de servidor")
 
 @app.post("/api/webhook")
 async def webhook_mercado_pago(request: Request):
@@ -199,13 +191,55 @@ async def webhook_mercado_pago(request: Request):
             
             status = payment.get("status")
             
+            # Solo actuamos si el pago se aprobó
             if status == "approved":
-                print(f"PAGO APROBADO: ID {payment_id}")
+                print(f"💰 PAGO APROBADO: ID {payment_id}")
                 
                 metadata = payment.get("metadata", {})
                 items = payment.get("additional_info", {}).get("items", [])
                 total_paid = payment.get("transaction_amount", 0)
                 
+                try:
+                    with Session(engine) as session:
+                        print("Actualizando stock...")
+                        for item in items:
+                            item_id_str = item.get("id", "")
+                            quantity = int(item.get("quantity", 0))
+                            
+                            # Ignoramos el ítem de envío ("SHIP|0")
+                            if not item_id_str or "SHIP" in item_id_str:
+                                continue
+
+                            # Formato esperado: "TIPO|ID" (ej: "PACK|2" o "IND|5")
+                            if "|" in item_id_str:
+                                tipo, prod_id = item_id_str.split("|")
+                                product = session.get(Product, int(prod_id))
+                                
+                                if product:
+                                    if tipo == "IND":
+                                        # Restamos stock individual
+                                        product.stock = max(0, product.stock - quantity)
+                                        print(f"Restado {quantity} botellas a {product.name}")
+                                        
+                                    elif tipo == "PACK" and product.pack_info:
+                                        # Restamos stock del pack (es un JSON, hay que actualizar el dict)
+                                        current_pack_info = dict(product.pack_info) # Copia
+                                        current_stock = current_pack_info.get("pack_stock", 0)
+                                        current_pack_info["pack_stock"] = max(0, current_stock - quantity)
+                                        
+                                        # Reasignamos para que SQLModel detecte el cambio
+                                        product.pack_info = current_pack_info
+                                        print(f"Restado {quantity} packs a {product.name}")
+                                        
+                                    session.add(product)
+                        
+                        session.commit()
+                        print("✅ Stock actualizado en DB")
+                        
+                except Exception as e_stock:
+                    print(f"❌ Error actualizando stock: {e_stock}")
+
+                # --- 2. ENVIAR CORREOS ---
                 print("Enviando correos...")
                 send_emails(metadata, items, total_paid)
 
