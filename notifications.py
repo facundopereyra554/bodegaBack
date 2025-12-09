@@ -4,6 +4,9 @@ import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
+from email.mime.base import MIMEBase
+from email import encoders
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -64,9 +67,7 @@ def send_emails(metadata, items, total_paid):
     except Exception as e:
         print(f"❌ Error enviando email al cliente: {e}")
 
-    # --- CORREO 2: AL ADMIN (A TI MISMO) ---
     try:
-        # Nos enviamos el mail a nosotros mismos
         admin_email = sender_email 
         subject_admin = f"NUEVA VENTA - {metadata.get('name')} {metadata.get('last_name')}"
         
@@ -104,3 +105,122 @@ def send_emails(metadata, items, total_paid):
         
     except Exception as e:
         print(f"❌ Error enviando alerta admin: {e}")
+
+
+def send_transfer_email(user_data, items, total_paid, discount, file_bytes, filename):
+    sender_email = os.getenv("MAIL_USERNAME")
+    sender_password = os.getenv("MAIL_PASSWORD")
+    
+    try:
+        msg_client = MIMEMultipart()
+        msg_client['From'] = sender_email
+        msg_client['To'] = user_data.get('email')
+        msg_client['Subject'] = "Pedido por Transferencia Recibido - Bodega Valle del Cóndor"
+        
+        body_client = f"""
+        Hola {user_data.get('name')},
+        
+        Hemos recibido tu pedido y el comprobante de transferencia.
+        
+        Total a pagar (con descuento): ${total_paid}
+        
+        Verificaremos la acreditación en nuestra cuenta bancaria y te avisaremos cuando el pedido sea despachado.
+        
+        Muchas gracias por tu compra.
+        """
+        msg_client.attach(MIMEText(body_client, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg_client)
+        server.quit()
+        print("Mail cliente enviado.")
+    except Exception as e:
+        print(f"Error mail cliente: {e}")
+
+    # 2. CORREO AL ADMIN (CON EL COMPROBANTE ADJUNTO)
+    try:
+        msg_admin = MIMEMultipart()
+        msg_admin['From'] = sender_email
+        msg_admin['To'] = sender_email # Se lo manda a sí mismo
+        msg_admin['Subject'] = f"NUEVA TRANSFERENCIA - {user_data.get('name')} {user_data.get('last_name')}"
+        
+        items_str = "\n".join([f"- {i['quantity']}x {i.get('title', 'Producto')}" for i in items])
+        
+        body_admin = f"""
+        ¡NUEVA VENTA POR TRANSFERENCIA!
+        -------------------------------
+        Cliente: {user_data.get('name')} {user_data.get('last_name')}
+        Email: {user_data.get('email')}
+        WhatsApp: {user_data.get('whatsapp')}
+        Dirección: {user_data.get('address')}
+        CP: {user_data.get('zip_code')}
+        
+        PEDIDO:
+        {items_str}
+        
+        Total Original: ${total_paid / (1 - discount)}
+        Descuento aplicado: {int(discount * 100)}%
+        TOTAL FINAL: ${total_paid}
+        
+        -------------------------------
+        >>> REVISA EL COMPROBANTE ADJUNTO <<<
+        """
+        msg_admin.attach(MIMEText(body_admin, 'plain'))
+
+        # ADJUNTAR EL ARCHIVO
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(file_bytes)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f"attachment; filename= {filename}")
+        msg_admin.attach(part)
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg_admin)
+        server.quit()
+        print("Mail admin con comprobante enviado.")
+        
+    except Exception as e:
+        print(f"Error mail admin: {e}")
+
+def send_contact_email(contact_data):
+    sender_email = os.getenv("MAIL_USERNAME")
+    sender_password = os.getenv("MAIL_PASSWORD")
+    # Se envía al mismo correo que envía (el del dueño)
+    admin_email = sender_email 
+    
+    subject = f"CONSULTA WEB - {contact_data.name}"
+    
+    body = f"""
+    NUEVO MENSAJE DE CONTACTO
+    -------------------------
+    Nombre: {contact_data.name}
+    Email: {contact_data.email}
+    
+    Mensaje:
+    {contact_data.message}
+    -------------------------
+    Responder a este correo para contactar al cliente.
+    """
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = admin_email
+        # Esto es un truco: ponemos el email del cliente en "Reply-To"
+        # Así cuando le das "Responder" en Gmail, le respondes al cliente y no a ti mismo
+        msg.add_header('Reply-To', contact_data.email) 
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        print("Mail de contacto enviado.")
+    except Exception as e:
+        print(f"Error mail contacto: {e}")

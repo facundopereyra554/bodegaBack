@@ -2,6 +2,12 @@
 from typing import Optional, List, Dict, Any
 from sqlmodel import Field, SQLModel, Column, JSON
 
+
+class ContactForm(SQLModel):
+    name: str
+    email: str
+    message: str
+
 class CartItem(SQLModel):
     id: int
     quantity: int
