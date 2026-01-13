@@ -37,3 +37,7 @@ class Product(SQLModel, table=True):
     images: List[str] = Field(sa_column=Column(JSON))
     additional_info: Dict[str, Any] = Field(sa_column=Column(JSON))
     pack_info: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+
+class ProcessedPayment(SQLModel, table=True):
+    payment_id: str = Field(primary_key=True)
+    status: str

@@ -1,6 +1,6 @@
 import os
 import mercadopago
-from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select, SQLModel
 from typing import List
@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 from notifications import send_emails, send_transfer_email, send_contact_email
 import json
-from models import Product, Cart, ContactForm
-from database import engine
+from models import Product, Cart, ContactForm, ProcessedPayment 
+from database import engine, create_db_and_tables
 
 load_dotenv()
 
@@ -59,6 +59,12 @@ def calculate_shipping_cost(cp_str: str) -> float:
         return 8500.00 
     else:
         return 8500.00 
+    
+#modificar por algo en desuso
+
+@app.on_event("startup")
+def on_startup():
+    create_db_and_tables()
 
 @app.get("/api/products", response_model=List[Product])
 def get_products(session: Session = Depends(get_session)):
@@ -176,59 +182,83 @@ async def webhook_mercado_pago(request: Request):
         payment_id = params.get("id") or params.get("data.id")
 
         if topic == "payment" and payment_id:
-            # 1. CHEQUEO: Si ya procesamos este ID, no hacemos NADA.
-            if payment_id in processed_payment_ids:
-                print(f"⚠️ Pago {payment_id} ya procesado. Ignorando duplicado.")
-                return {"status": "ok"}
+            payment_id = str(payment_id)
 
+            # --- 1. VERIFICACIÓN EN BASE DE DATOS (Memoria Permanente) ---
+            # Si ya tenemos este ID guardado, es un aviso repetido o liquidación -> IGNORAR
+            with Session(engine) as session:
+                existing_payment = session.get(ProcessedPayment, payment_id)
+                if existing_payment:
+                    print(f"⚠️ Pago {payment_id} ya procesado anteriormente. Ignorando.")
+                    return {"status": "ok"}
+
+            # Si es nuevo, consultamos a MP
             payment_info = sdk.payment().get(payment_id)
             payment = payment_info.get("response", {})
             status = payment.get("status")
             
             if status == "approved":
-                print(f"💰 PAGO APROBADO NUEVO: ID {payment_id}")
+                print(f"💰 PAGO APROBADO REAL: ID {payment_id}")
                 
-                # Agregamos a la lista para no volver a procesarlo
-                processed_payment_ids.add(payment_id)
-                
+                # --- 2. GUARDAR EN DB INMEDIATAMENTE ---
+                # Lo anotamos para que nunca más se procese, pase lo que pase
+                try:
+                    with Session(engine) as session:
+                        new_payment = ProcessedPayment(payment_id=payment_id, status=status)
+                        session.add(new_payment)
+                        session.commit()
+                except Exception as e_db:
+                    print(f"Error guardando ID en DB: {e_db}")
+                    # Si falla (raro), seguimos procesando igual para no perder la venta
+
+                # --- 3. DATOS DEL PEDIDO ---
                 metadata = payment.get("metadata", {})
                 items = payment.get("additional_info", {}).get("items", [])
                 total_paid = payment.get("transaction_amount", 0)
                 
-                # Actualizar Stock
+                # --- 4. RESTAR STOCK (Lógica Completa) ---
                 try:
                     with Session(engine) as session:
                         for item in items:
                             item_id_str = item.get("id", "")
                             quantity = int(item.get("quantity", 0))
                             
+                            # Ignoramos items sin ID o vacíos
                             if not item_id_str: continue
 
-                            # Solo procesamos si tiene nuestro formato "TIPO|ID"
+                            # Detectamos si es Individual o Pack ("IND|1" o "PACK|3")
                             if "|" in item_id_str:
                                 tipo, prod_id = item_id_str.split("|")
                                 product = session.get(Product, int(prod_id))
                                 
                                 if product:
                                     if tipo == "IND":
+                                        # Restamos stock de botella suelta
                                         product.stock = max(0, product.stock - quantity)
+                                        print(f"📉 Stock Ind. {product.name}: -{quantity}")
+                                        
                                     elif tipo == "PACK" and product.pack_info:
+                                        # Restamos stock del pack (dentro del JSON)
                                         current_pack = dict(product.pack_info)
                                         p_stock = current_pack.get("pack_stock", 0)
                                         current_pack["pack_stock"] = max(0, p_stock - quantity)
                                         product.pack_info = current_pack
+                                        print(f"📉 Stock Pack {product.name}: -{quantity}")
+                                        
                                     session.add(product)
+                        
                         session.commit()
-                        print("✅ Stock descontado correctamente")
+                        print("✅ Stock descontado correctamente en DB")
                 except Exception as e_stock:
-                    print(f"❌ Error descontando stock: {e_stock}")
+                    print(f"❌ Error crítico descontando stock: {e_stock}")
 
-                # Enviar correos
+                # --- 5. ENVIAR CORREOS ---
+                print("📧 Enviando notificaciones...")
                 send_emails(metadata, items, total_paid)
 
         return {"status": "ok"}
     except Exception as e:
-        print(f"Error Webhook: {e}")
+        print(f"Error General Webhook: {e}")
         return {"status": "error"}
 
 # --- ENDPOINT TRANSFERENCIA (Corregido None) ---
@@ -302,3 +332,52 @@ def submit_contact_form(form: ContactForm):
     # Solo enviamos el correo
     send_contact_email(form)
     return {"status": "ok", "message": "Mensaje enviado"}
+
+
+# --- SEGURIDAD: Verificar Contraseña de Admin ---
+def verify_admin(x_admin_token: str = Header(None)):
+    admin_pass = os.getenv("ADMIN_PASSWORD")
+    if not admin_pass or x_admin_token != admin_pass:
+        raise HTTPException(status_code=401, detail="Acceso no autorizado")
+
+# --- CRUD DE PRODUCTOS (Solo Admin) ---
+
+# 1. CREAR PRODUCTO
+@app.post("/api/products", status_code=201)
+def create_product(product: Product, authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
+    session.add(product)
+    session.commit()
+    session.refresh(product)
+    return product
+
+# 2. EDITAR PRODUCTO (Stock, Precio, Info)
+@app.put("/api/products/{product_id}")
+def update_product(product_id: int, product_data: Product, authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
+    product_db = session.get(Product, product_id)
+    if not product_db:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    # Actualizamos los campos
+    product_data_dict = product_data.model_dump(exclude_unset=True)
+    # Evitamos sobrescribir el ID
+    if "id" in product_data_dict:
+        del product_data_dict["id"]
+        
+    for key, value in product_data_dict.items():
+        setattr(product_db, key, value)
+
+    session.add(product_db)
+    session.commit()
+    session.refresh(product_db)
+    return product_db
+
+# 3. BORRAR PRODUCTO
+@app.delete("/api/products/{product_id}")
+def delete_product(product_id: int, authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
+    product = session.get(Product, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    
+    session.delete(product)
+    session.commit()
+    return {"ok": True}
