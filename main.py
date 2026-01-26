@@ -381,3 +381,7 @@ def delete_product(product_id: int, authorized: bool = Depends(verify_admin), se
     session.delete(product)
     session.commit()
     return {"ok": True}
+
+@app.post("/api/admin/login")
+def admin_login_check(authorized: bool = Depends(verify_admin)):
+    return {"status": "ok"}
