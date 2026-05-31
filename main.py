@@ -24,7 +24,7 @@ sdk = mercadopago.SDK(mp_access_token)
 
 
 origins = [
-    "https://amanece.ar/",
+    "https://amanece.ar",
 ]
 
 app.add_middleware(
@@ -156,7 +156,7 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
             "pending": "https://amanece.ar/pago-pendiente"
         },
         "auto_return": "approved",
-        "notification_url": "https://ia.serv-node.dev/api/webhook"
+        "notification_url": "https://apibod.serv-node.dev/api/webhook"
     }
 
     try:
