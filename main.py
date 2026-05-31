@@ -23,11 +23,8 @@ if not mp_access_token:
 sdk = mercadopago.SDK(mp_access_token)
 
 
-
-# Tus orígenes permitidos
 origins = [
-    "https://amt-dcv.com",
-    "https://www.amt-dcv.com"
+    "https://amanece.ar/",
 ]
 
 app.add_middleware(
@@ -154,9 +151,9 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
         "payer": payer_info,
         "metadata": metadata,
         "back_urls": {
-            "success": "https://amt-dcv.com/pago-exitoso",
-            "failure": "https://amt-dcv.com/pago-fallido",
-            "pending": "https://amt-dcv.com/pago-pendiente"
+            "success": "https://amanece.ar/pago-exitoso",
+            "failure": "https://amanece.ar/pago-fallido",
+            "pending": "https://amanece.ar/pago-pendiente"
         },
         "auto_return": "approved",
         "notification_url": "https://ia.serv-node.dev/api/webhook"
@@ -183,25 +180,18 @@ async def webhook_mercado_pago(request: Request):
 
         if topic == "payment" and payment_id:
             payment_id = str(payment_id)
-
-            # --- 1. VERIFICACIÓN EN BASE DE DATOS (Memoria Permanente) ---
-            # Si ya tenemos este ID guardado, es un aviso repetido o liquidación -> IGNORAR
             with Session(engine) as session:
                 existing_payment = session.get(ProcessedPayment, payment_id)
                 if existing_payment:
                     print(f"⚠️ Pago {payment_id} ya procesado anteriormente. Ignorando.")
                     return {"status": "ok"}
 
-            # Si es nuevo, consultamos a MP
             payment_info = sdk.payment().get(payment_id)
             payment = payment_info.get("response", {})
             status = payment.get("status")
             
             if status == "approved":
                 print(f"💰 PAGO APROBADO REAL: ID {payment_id}")
-                
-                # --- 2. GUARDAR EN DB INMEDIATAMENTE ---
-                # Lo anotamos para que nunca más se procese, pase lo que pase
                 try:
                     with Session(engine) as session:
                         new_payment = ProcessedPayment(payment_id=payment_id, status=status)
@@ -209,36 +199,29 @@ async def webhook_mercado_pago(request: Request):
                         session.commit()
                 except Exception as e_db:
                     print(f"Error guardando ID en DB: {e_db}")
-                    # Si falla (raro), seguimos procesando igual para no perder la venta
 
-                # --- 3. DATOS DEL PEDIDO ---
                 metadata = payment.get("metadata", {})
                 items = payment.get("additional_info", {}).get("items", [])
                 total_paid = payment.get("transaction_amount", 0)
                 
-                # --- 4. RESTAR STOCK (Lógica Completa) ---
                 try:
                     with Session(engine) as session:
                         for item in items:
                             item_id_str = item.get("id", "")
                             quantity = int(item.get("quantity", 0))
                             
-                            # Ignoramos items sin ID o vacíos
                             if not item_id_str: continue
 
-                            # Detectamos si es Individual o Pack ("IND|1" o "PACK|3")
                             if "|" in item_id_str:
                                 tipo, prod_id = item_id_str.split("|")
                                 product = session.get(Product, int(prod_id))
                                 
                                 if product:
                                     if tipo == "IND":
-                                        # Restamos stock de botella suelta
                                         product.stock = max(0, product.stock - quantity)
                                         print(f"📉 Stock Ind. {product.name}: -{quantity}")
                                         
                                     elif tipo == "PACK" and product.pack_info:
-                                        # Restamos stock del pack (dentro del JSON)
                                         current_pack = dict(product.pack_info)
                                         p_stock = current_pack.get("pack_stock", 0)
                                         current_pack["pack_stock"] = max(0, p_stock - quantity)
@@ -251,8 +234,6 @@ async def webhook_mercado_pago(request: Request):
                         print("✅ Stock descontado correctamente en DB")
                 except Exception as e_stock:
                     print(f"❌ Error crítico descontando stock: {e_stock}")
-
-                # --- 5. ENVIAR CORREOS ---
                 print("📧 Enviando notificaciones...")
                 send_emails(metadata, items, total_paid)
 
@@ -261,7 +242,6 @@ async def webhook_mercado_pago(request: Request):
         print(f"Error General Webhook: {e}")
         return {"status": "error"}
 
-# --- ENDPOINT TRANSFERENCIA (Corregido None) ---
 @app.post("/api/create_transfer_order")
 async def create_transfer_order(
     cart_data: str = Form(...),    
@@ -275,13 +255,11 @@ async def create_transfer_order(
         total_price = data.get("total_price", 0)
         discount = data.get("discount", 0)
         
-        # Corrección de campos para el email
         if 'lastName' in user_data:
             user_data['last_name'] = user_data['lastName']
         if 'zip_code' in data:
             user_data['zip_code'] = data['zip_code']
 
-        # Descuento de Stock Inmediato
         for item in items:
             product = session.get(Product, item['id'])
             if not product: continue
@@ -329,7 +307,6 @@ async def create_transfer_order(
     
 @app.post("/api/contact")
 def submit_contact_form(form: ContactForm):
-    # Solo enviamos el correo
     send_contact_email(form)
     return {"status": "ok", "message": "Mensaje enviado"}
 
