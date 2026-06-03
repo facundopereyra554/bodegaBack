@@ -111,6 +111,10 @@ def send_transfer_email(user_data, items, total_paid, discount, file_bytes, file
     sender_email = os.getenv("MAIL_USERNAME")
     sender_password = os.getenv("MAIL_PASSWORD")
     
+    if not sender_email or not sender_password:
+        print("ERROR: Faltan credenciales de correo en .env")
+        return
+        
     try:
         msg_client = MIMEMultipart()
         msg_client['From'] = sender_email
@@ -189,6 +193,11 @@ def send_transfer_email(user_data, items, total_paid, discount, file_bytes, file
 def send_contact_email(contact_data):
     sender_email = os.getenv("MAIL_USERNAME")
     sender_password = os.getenv("MAIL_PASSWORD")
+    
+    if not sender_email or not sender_password:
+        print("ERROR: Faltan credenciales de correo en .env")
+        return
+
     # Se envía al mismo correo que envía (el del dueño)
     admin_email = sender_email 
     
