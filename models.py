@@ -33,22 +33,25 @@ class Product(SQLModel, table=True):
     category: str
     long_description: str
     stock: int
+    is_active: bool = Field(default=True)
     images: List[str] = Field(sa_column=Column(JSON))  # Soporta una o múltiples rutas de imágenes
     additional_info: Dict[str, Any] = Field(sa_column=Column(JSON))
     pack_info: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    marca: Optional[str] = None
+    composicion: Optional[str] = None
     cosecha: Optional[str] = None
-    composicion_varietal: Optional[str] = None
-    enologo: Optional[str] = None
     region: Optional[str] = None
     elevacion: Optional[str] = None
+    presentacion: Optional[str] = None
     alcohol: Optional[str] = None
     acidez: Optional[str] = None
+    ph: Optional[str] = None
     metodo_cosecha: Optional[str] = None
     vinificacion: Optional[str] = None
-    crianza: Optional[str] = None
-    nota_cata: Optional[str] = None
-    temperatura_servicio: Optional[str] = None
-    contenido: Optional[str] = None
+    notas_de_cata: Optional[str] = None
+    servicio_ideal: Optional[str] = None
+    peso_caja: Optional[str] = None
+    medidas_caja: Optional[str] = None
 
 class ProcessedPayment(SQLModel, table=True):
     payment_id: str = Field(primary_key=True)

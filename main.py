@@ -32,6 +32,7 @@ sdk = mercadopago.SDK(mp_access_token)
 
 origins = [
     "https://amanece.ar",
+    "https://bodegavalledelcondor.com"
 ]
 
 app.add_middleware(
@@ -91,6 +92,8 @@ def calculate_cart_totals(cart_items: List[CartItem], zip_code: str, session: Se
         product = session.get(Product, prod_id)
         if not product or not product.pack_info:
             raise HTTPException(status_code=400, detail=f"Producto {prod_id} no válido.")
+        if not product.is_active:
+            raise HTTPException(status_code=400, detail=f"Producto {product.name} no está disponible temporalmente.")
         
         total_packs += qty
         pack_price = product.pack_info.get("pack_price", 0.0)
@@ -296,6 +299,10 @@ def create_transfer_order(
             mail_items.append({'quantity': v_item["qty"], 'title': f"{v_item['name']} (Pack)"})
 
         file_content = file.file.read()
+        
+        # Validar tamaño del archivo (max 5MB)
+        if len(file_content) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="El comprobante es demasiado grande. El límite es 5MB.")
 
         # ASENTAR EN LA BASE DE DATOS DE COMPRAS (compras.db)
         with Session(engine_compras) as compras_session:

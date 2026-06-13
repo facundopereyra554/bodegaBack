@@ -12,6 +12,7 @@ env/
 .env
 .env.local
 .env.*.local
+.xlsx
 
 # Base de datos SQLite (Se genera con seed_database.py, no subir la binaria)
 *.db
