@@ -12,6 +12,10 @@ engine_compras = create_engine(COMPRAS_DATABASE_URL, echo=True)
 def create_db_and_tables():
     import models  # Nos aseguramos de registrar los modelos en la metadata
     
-    # Inicializa las tablas correspondientes en cada base de datos
-    SQLModel.metadata.create_all(engine)
-    SQLModel.metadata.create_all(engine_compras)
+    # Inicializa solo las tablas correspondientes en cada base de datos
+    # tienda.db: productos y pagos procesados
+    # compras.db: historial de compras
+    tienda_tables = [models.Product.__table__, models.ProcessedPayment.__table__]
+    compras_tables = [models.PurchaseRecord.__table__]
+    SQLModel.metadata.create_all(engine, tables=tienda_tables)
+    SQLModel.metadata.create_all(engine_compras, tables=compras_tables)

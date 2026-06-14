@@ -3,12 +3,18 @@ import json
 import shutil
 import uuid
 import secrets
+import hashlib
+import hmac as hmac_module
+import threading
 import mercadopago
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, select, SQLModel
+import csv
+import io
 from typing import List, Dict, Any
 from dotenv import load_dotenv
 
@@ -18,7 +24,12 @@ from notifications import send_emails, send_transfer_email, send_contact_email
 
 load_dotenv()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    create_db_and_tables()
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # Montamos la carpeta estática para servir tanto imágenes como archivos cargados
 os.makedirs("static/products", exist_ok=True)
@@ -29,6 +40,10 @@ if not mp_access_token:
     raise ValueError("La variable de entorno MERCADOPAGO_ACCESS_TOKEN no está definida.")
 
 sdk = mercadopago.SDK(mp_access_token)
+
+mp_webhook_secret = os.getenv("MERCADOPAGO_WEBHOOK_SECRET")
+if not mp_webhook_secret:
+    print("⚠️ MERCADOPAGO_WEBHOOK_SECRET no definido. El webhook aceptará notificaciones sin verificar firma.")
 
 origins = [
     "https://amanece.ar",
@@ -47,13 +62,14 @@ def get_session():
     with Session(engine) as session:
         yield session
 
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
+# Startup se maneja con lifespan (ver arriba)
 
 @app.get("/api/products", response_model=List[Product])
-def get_products(session: Session = Depends(get_session)):
-    products = session.exec(select(Product)).all()
+def get_products(include_inactive: bool = False, session: Session = Depends(get_session)):
+    query = select(Product)
+    if not include_inactive:
+        query = query.where(Product.is_active == True)
+    products = session.exec(query).all()
     return products
 
 def calculate_shipping_cost(cp_str: str) -> float:
@@ -169,93 +185,167 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
             "email": cart.user_data.email
         }
 
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    api_public_url = os.getenv("API_PUBLIC_URL", "http://127.0.0.1:8000").rstrip("/")
+
     preference_data = {
         "items": preference_items,
         "shipments": {"cost": totals["shipping_cost"], "mode": "not_specified"},
         "payer": payer_info,
         "metadata": metadata,
         "back_urls": {
-            "success": "https://amanece.ar/pago-exitoso",
-            "failure": "https://amanece.ar/pago-fallido",
-            "pending": "https://amanece.ar/pago-pendiente"
+            "success": f"{frontend_url}/pago-exitoso",
+            "failure": f"{frontend_url}/pago-fallido",
+            "pending": f"{frontend_url}/pago-pendiente"
         },
         "auto_return": "approved",
-        "notification_url": "https://apibod.serv-node.dev/api/webhook"
     }
+    
+    # MercadoPago no acepta localhost o 127.0.0.1 en el notification_url
+    if "localhost" not in api_public_url and "127.0.0.1" not in api_public_url:
+        preference_data["notification_url"] = f"{api_public_url}/api/webhook"
 
     try:
         preference_response = sdk.preference().create(preference_data)
         if preference_response and "response" in preference_response and "id" in preference_response["response"]:
             return {"preference_id": preference_response["response"]["id"]}
-        raise HTTPException(status_code=500, detail="Error MP")
+        raise HTTPException(status_code=500, detail=f"Error MP: {preference_response}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- Verificación de Firma del Webhook ---
+def verify_webhook_signature(request: Request, data_id: str) -> bool:
+    """Verifica la firma HMAC-SHA256 de las notificaciones de MercadoPago."""
+    if not mp_webhook_secret:
+        return True  # Si no hay secret configurado, se permite (con warning al inicio)
+
+    x_signature = request.headers.get("x-signature", "")
+    x_request_id = request.headers.get("x-request-id", "")
+
+    if not x_signature:
+        return False
+
+    # Parsear ts y v1 del header x-signature (formato: "ts=123,v1=abc")
+    parts = {}
+    for part in x_signature.split(","):
+        kv = part.strip().split("=", 1)
+        if len(kv) == 2:
+            parts[kv[0].strip()] = kv[1].strip()
+
+    ts = parts.get("ts", "")
+    v1 = parts.get("v1", "")
+
+    if not ts or not v1:
+        return False
+
+    # Construir la cadena manifest y calcular HMAC
+    manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+    expected = hmac_module.new(
+        mp_webhook_secret.encode(), manifest.encode(), hashlib.sha256
+    ).hexdigest()
+
+    return hmac_module.compare_digest(v1, expected)
+
 # --- WEBHOOK MERCADO PAGO ---
 @app.post("/api/webhook")
-def webhook_mercado_pago(request: Request):
+async def webhook_mercado_pago(request: Request):
     try:
-        params = request.query_params
-        topic = params.get("topic") or params.get("type")
-        payment_id = params.get("id") or params.get("data.id")
+        # 1. Leer datos del webhook (soporta body JSON v2 y query params legacy)
+        payment_id = None
+        topic = None
 
-        if topic == "payment" and payment_id:
-            payment_id = str(payment_id)
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+
+        if body:
+            # Formato v2: {"action": "payment.created", "data": {"id": "123"}, "type": "payment"}
+            action = body.get("action", "")
+            data = body.get("data", {})
+            if "payment" in action or body.get("type") == "payment":
+                topic = "payment"
+                payment_id = str(data.get("id", ""))
+
+        # Fallback a query params (IPN legacy)
+        if not payment_id:
+            params = request.query_params
+            topic = params.get("topic") or params.get("type")
+            payment_id = params.get("id") or params.get("data.id")
+
+        if topic != "payment" or not payment_id:
+            return {"status": "ok"}
+
+        payment_id = str(payment_id)
+
+        # 2. Verificar firma HMAC
+        if not verify_webhook_signature(request, payment_id):
+            print(f"⚠️ Webhook con firma inválida rechazado. Payment ID: {payment_id}")
+            raise HTTPException(status_code=401, detail="Firma inválida")
+
+        # 3. Idempotencia: verificar si ya se procesó
+        with Session(engine) as session:
+            existing_payment = session.get(ProcessedPayment, payment_id)
+            if existing_payment:
+                return {"status": "ok"}
+
+        # 4. Obtener info del pago desde MP
+        payment_info = sdk.payment().get(payment_id)
+        payment = payment_info.get("response", {})
+        status = payment.get("status")
+
+        if status == "approved":
             with Session(engine) as session:
-                existing_payment = session.get(ProcessedPayment, payment_id)
-                if existing_payment:
-                    return {"status": "ok"}
+                new_payment = ProcessedPayment(payment_id=payment_id, status=status)
+                session.add(new_payment)
+                session.commit()
 
-            payment_info = sdk.payment().get(payment_id)
-            payment = payment_info.get("response", {})
-            status = payment.get("status")
-            
-            if status == "approved":
-                with Session(engine) as session:
-                    new_payment = ProcessedPayment(payment_id=payment_id, status=status)
-                    session.add(new_payment)
-                    session.commit()
+            metadata = payment.get("metadata", {})
+            additional_info = payment.get("additional_info") or {}
+            items = additional_info.get("items", [])
+            total_paid = payment.get("transaction_amount", 0)
 
-                metadata = payment.get("metadata", {})
-                additional_info = payment.get("additional_info") or {}
-                items = additional_info.get("items", [])
-                total_paid = payment.get("transaction_amount", 0)
-                
-                # Descuento de Stock
-                with Session(engine) as session:
-                    for item in items:
-                        item_id_str = item.get("id", "")
-                        quantity = int(item.get("quantity", 0))
-                        
-                        if "|" in item_id_str:
-                            tipo, prod_id = item_id_str.split("|")
-                            product = session.get(Product, int(prod_id))
-                            if product and tipo == "PACK" and product.pack_info:
+            # Descuento de Stock
+            with Session(engine) as session:
+                for item in items:
+                    item_id_str = item.get("id", "")
+                    quantity = int(item.get("quantity", 0))
+
+                    if "|" in item_id_str:
+                        tipo, prod_id = item_id_str.split("|")
+                        product = session.get(Product, int(prod_id))
+                        if product:
+                            if tipo == "PACK" and product.pack_info:
                                 current_pack = dict(product.pack_info)
                                 p_stock = current_pack.get("pack_stock", 0)
                                 current_pack["pack_stock"] = max(0, p_stock - quantity)
                                 product.pack_info = current_pack
-                                product.stock = max(0, product.stock - quantity)
-                                session.add(product)
-                    session.commit()
-                
-                # ASENTAR EN LA BASE DE DATOS DE COMPRAS (compras.db)
-                with Session(engine_compras) as compras_session:
-                    purchase = PurchaseRecord(
-                        payment_id=payment_id,
-                        payment_method="mp",
-                        status=status,
-                        total_paid=float(total_paid),
-                        items=json.dumps(items),
-                        user_data=json.dumps(metadata)
-                    )
-                    compras_session.add(purchase)
-                    compras_session.commit()
+                            product.stock = max(0, product.stock - quantity)
+                            session.add(product)
+                session.commit()
 
-                send_emails(metadata, items, total_paid)
+            # Registrar compra en compras.db
+            with Session(engine_compras) as compras_session:
+                purchase = PurchaseRecord(
+                    payment_id=payment_id,
+                    payment_method="mp",
+                    status=status,
+                    total_paid=float(total_paid),
+                    items=json.dumps(items),
+                    user_data=json.dumps(metadata)
+                )
+                compras_session.add(purchase)
+                compras_session.commit()
+
+            # Enviar emails en background para no bloquear la respuesta al webhook
+            threading.Thread(target=send_emails, args=(metadata, items, total_paid), daemon=True).start()
 
         return {"status": "ok"}
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"❌ Error en webhook: {e}")
         return {"status": "error", "detail": str(e)}
 
 # --- ORDEN DE TRANSFERENCIA ---
@@ -284,7 +374,7 @@ def create_transfer_order(
         for v_item in totals["items"]:
             product = session.get(Product, v_item["product_id"])
             current_pack = dict(product.pack_info)
-            current_pack["pack_stock"] = current_pack.get("pack_stock", 0) - v_item["qty"]
+            current_pack["pack_stock"] = max(0, current_pack.get("pack_stock", 0) - v_item["qty"])
             product.pack_info = current_pack
             product.stock = max(0, product.stock - v_item["qty"])
             session.add(product)
@@ -316,17 +406,20 @@ def create_transfer_order(
             )
             compras_session.add(purchase)
             compras_session.commit()
+            compras_session.refresh(purchase)
+            transfer_id = f"TR-{purchase.id}"
+            
+            purchase.payment_id = transfer_id
+            compras_session.add(purchase)
+            compras_session.commit()
 
-        send_transfer_email(
-            user_data=user_data,
-            items=mail_items,
-            total_paid=round(total_a_pagar, 2),
-            discount=TRANSFER_DISCOUNT_PCT,
-            file_bytes=file_content,
-            filename=file.filename
-        )
+        threading.Thread(
+            target=send_transfer_email,
+            args=(user_data, mail_items, round(total_a_pagar, 2), TRANSFER_DISCOUNT_PCT, file_content, file.filename),
+            daemon=True
+        ).start()
 
-        return {"status": "ok", "message": "Orden recibida"}
+        return {"status": "ok", "message": "Orden recibida", "transfer_id": transfer_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
@@ -380,6 +473,26 @@ def download_compras_db(authorized: bool = Depends(verify_admin)):
         return FileResponse(path=file_path, filename="backup_compras.db", media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="Base de datos compras.db no encontrada.")
 
+@app.get("/api/admin/backup/compras-csv")
+def download_compras_csv(authorized: bool = Depends(verify_admin)):
+    with Session(engine_compras) as session:
+        purchases = session.exec(select(PurchaseRecord)).all()
+        
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(["ID", "Payment ID", "Payment Method", "Status", "Total Paid", "Items", "User Data", "Created At"])
+    
+    for p in purchases:
+        writer.writerow([p.id, p.payment_id, p.payment_method, p.status, p.total_paid, p.items, p.user_data, p.created_at])
+        
+    # Usamos yield para el StreamingResponse
+    def iterfile():
+        yield stream.getvalue().encode("utf-8")
+        
+    response = StreamingResponse(iterfile(), media_type="text/csv")
+    response.headers["Content-Disposition"] = "attachment; filename=ventas.csv"
+    return response
+
 # CRUD DE PRODUCTOS
 @app.post("/api/products", status_code=201)
 def create_product(product: Product, authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
@@ -393,11 +506,13 @@ def update_product(product_id: int, product_data: Product, authorized: bool = De
     product_db = session.get(Product, product_id)
     if not product_db:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
-    
-    product_data_dict = product_data.model_dump(exclude_unset=True)
-    if "id" in product_data_dict:
-        del product_data_dict["id"]
-        
+
+    # Usamos exclude_none=False y exclude_unset=False para asegurarnos
+    # de que campos JSON como pack_info siempre se actualicen en la DB
+    product_data_dict = product_data.model_dump(exclude_none=False)
+    # Nunca permitir cambiar el ID
+    product_data_dict.pop("id", None)
+
     for key, value in product_data_dict.items():
         setattr(product_db, key, value)
 
