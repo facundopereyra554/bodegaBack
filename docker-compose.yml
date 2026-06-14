@@ -13,6 +13,8 @@ services:
       - .env
     volumes:
       - ./static:/app/static
+      - ./tienda.db:/app/tienda.db
+      - ./compras.db:/app/compras.db
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/products || exit 1"]
