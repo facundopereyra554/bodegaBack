@@ -468,7 +468,8 @@ def get_purchases(request: Request):
 
     with Session(engine_compras) as compras_session:
         # Ordenamos de más reciente a más antigua
-        purchases = compras_session.exec(select(PurchaseRecord).order_by(PurchaseRecord.id.desc())).all()
+        purchases = compras_session.exec(select(PurchaseRecord)).all()
+        purchases.reverse()
         return purchases
 
 @app.put("/api/admin/purchases/{purchase_id}/approve")
