@@ -461,11 +461,7 @@ def upload_images(files: List[UploadFile] = File(...), authorized: bool = Depend
 # --- ADMIN: COMPRAS ---
 
 @app.get("/api/admin/purchases")
-def get_purchases(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
-        raise HTTPException(status_code=401, detail="No autorizado")
-
+def get_purchases(authorized: bool = Depends(verify_admin)):
     with Session(engine_compras) as compras_session:
         # Ordenamos de más reciente a más antigua
         purchases = compras_session.exec(select(PurchaseRecord)).all()
@@ -473,11 +469,7 @@ def get_purchases(request: Request):
         return purchases
 
 @app.put("/api/admin/purchases/{purchase_id}/approve")
-def approve_purchase(purchase_id: int, request: Request, session: Session = Depends(get_session)):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
-        raise HTTPException(status_code=401, detail="No autorizado")
-
+def approve_purchase(purchase_id: int, authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
     with Session(engine_compras) as compras_session:
         purchase = compras_session.get(PurchaseRecord, purchase_id)
         if not purchase:
@@ -512,11 +504,7 @@ def approve_purchase(purchase_id: int, request: Request, session: Session = Depe
             raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/admin/purchases/{purchase_id}/reject")
-def reject_purchase(purchase_id: int, request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
-        raise HTTPException(status_code=401, detail="No autorizado")
-
+def reject_purchase(purchase_id: int, authorized: bool = Depends(verify_admin)):
     with Session(engine_compras) as compras_session:
         purchase = compras_session.get(PurchaseRecord, purchase_id)
         if not purchase:
