@@ -370,15 +370,15 @@ def create_transfer_order(
         subtotal_con_volumen = totals["subtotal"] * discount_multiplier
         total_a_pagar = (subtotal_con_volumen * (1.0 - TRANSFER_DISCOUNT_PCT)) + totals["shipping_cost"]
 
-        # Descontar Stock
-        for v_item in totals["items"]:
-            product = session.get(Product, v_item["product_id"])
-            current_pack = dict(product.pack_info)
-            current_pack["pack_stock"] = max(0, current_pack.get("pack_stock", 0) - v_item["qty"])
-            product.pack_info = current_pack
-            product.stock = max(0, product.stock - v_item["qty"])
-            session.add(product)
-        session.commit()
+        # Descontar Stock: AHORA SE HACE EN LA APROBACIÓN POR ADMIN, NO AQUÍ
+        # for v_item in totals["items"]:
+        #     product = session.get(Product, v_item["product_id"])
+        #     current_pack = dict(product.pack_info)
+        #     current_pack["pack_stock"] = max(0, current_pack.get("pack_stock", 0) - v_item["qty"])
+        #     product.pack_info = current_pack
+        #     product.stock = max(0, product.stock - v_item["qty"])
+        #     session.add(product)
+        # session.commit()
 
         if 'lastName' in user_data:
             user_data['last_name'] = user_data['lastName']
@@ -401,7 +401,7 @@ def create_transfer_order(
                 payment_method="transferencia",
                 status="pending_review",
                 total_paid=round(total_a_pagar, 2),
-                items=json.dumps(mail_items),
+                items=json.dumps(totals["items"]),  # Guardar los items completos con product_id para luego descontar stock
                 user_data=json.dumps(user_data)
             )
             compras_session.add(purchase)
@@ -456,6 +456,79 @@ def upload_images(files: List[UploadFile] = File(...), authorized: bool = Depend
         saved_paths.append(f"/static/products/{safe_filename}")
         
     return {"paths": saved_paths}
+
+
+# --- ADMIN: COMPRAS ---
+
+@app.get("/api/admin/purchases")
+def get_purchases(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    with Session(engine_compras) as compras_session:
+        # Ordenamos de más reciente a más antigua
+        purchases = compras_session.query(PurchaseRecord).order_by(PurchaseRecord.id.desc()).all()
+        return purchases
+
+@app.put("/api/admin/purchases/{purchase_id}/approve")
+def approve_purchase(purchase_id: int, request: Request, session: Session = Depends(get_session)):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    with Session(engine_compras) as compras_session:
+        purchase = compras_session.get(PurchaseRecord, purchase_id)
+        if not purchase:
+            raise HTTPException(status_code=404, detail="Compra no encontrada")
+        
+        if purchase.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Esta compra ya no está pendiente")
+        
+        # Descontar stock ahora sí
+        try:
+            items = json.loads(purchase.items)
+            for v_item in items:
+                product = session.get(Product, v_item["product_id"])
+                if product:
+                    current_pack = dict(product.pack_info) if product.pack_info else {}
+                    if current_pack:
+                        current_pack["pack_stock"] = max(0, current_pack.get("pack_stock", 0) - v_item["qty"])
+                        product.pack_info = current_pack
+                    product.stock = max(0, product.stock - v_item["qty"])
+                    session.add(product)
+            session.commit()
+            
+            # Cambiar estado
+            purchase.status = "approved"
+            compras_session.add(purchase)
+            compras_session.commit()
+            
+            return {"message": "Compra aprobada y stock descontado con éxito"}
+        except Exception as e:
+            session.rollback()
+            compras_session.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/admin/purchases/{purchase_id}/reject")
+def reject_purchase(purchase_id: int, request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or auth_header != f"Bearer {ADMIN_TOKEN}":
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    with Session(engine_compras) as compras_session:
+        purchase = compras_session.get(PurchaseRecord, purchase_id)
+        if not purchase:
+            raise HTTPException(status_code=404, detail="Compra no encontrada")
+        
+        if purchase.status != "pending_review":
+            raise HTTPException(status_code=400, detail="Esta compra ya no está pendiente")
+        
+        purchase.status = "rejected"
+        compras_session.add(purchase)
+        compras_session.commit()
+        
+        return {"message": "Compra rechazada"}
 
 # Descargar Copia de Seguridad de la Base de Productos (tienda.db)
 @app.get("/api/admin/backup/tienda")
