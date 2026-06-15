@@ -527,6 +527,64 @@ def download_tienda_db(authorized: bool = Depends(verify_admin)):
         return FileResponse(path=file_path, filename="backup_tienda.db", media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="Base de datos tienda.db no encontrada.")
 
+import sqlite3
+import tempfile
+
+# Subir e Importar Base de Datos de Productos
+@app.post("/api/admin/upload-tienda-db")
+def upload_tienda_db(file: UploadFile = File(...), authorized: bool = Depends(verify_admin), session: Session = Depends(get_session)):
+    if not file.filename.endswith(".db"):
+        raise HTTPException(status_code=400, detail="El archivo debe tener extensión .db")
+
+    try:
+        content = file.file.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        conn = sqlite3.connect(tmp_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT * FROM product")
+        rows = cursor.fetchall()
+        
+        for row in rows:
+            data = dict(row)
+            # Eliminar ID para crear como nuevo registro (sin pisar los existentes)
+            data.pop("id", None)
+            
+            # Parsear columnas JSON de SQLite a objetos Python
+            if "images" in data and isinstance(data["images"], str):
+                try: data["images"] = json.loads(data["images"])
+                except: data["images"] = []
+            
+            if "additional_info" in data and isinstance(data["additional_info"], str):
+                try: data["additional_info"] = json.loads(data["additional_info"])
+                except: data["additional_info"] = {}
+                
+            if "pack_info" in data and isinstance(data["pack_info"], str):
+                try: data["pack_info"] = json.loads(data["pack_info"])
+                except: data["pack_info"] = None
+
+            # Dividir Marca y Nombre automáticamente si existe el patrón "Marca - Nombre" en el nombre y no tiene marca asignada
+            if data.get("name") and not data.get("marca"):
+                if " - " in data["name"]:
+                    parts = data["name"].split(" - ", 1)
+                    data["marca"] = parts[0].strip()
+                    data["name"] = parts[1].strip()
+
+            new_product = Product(**data)
+            session.add(new_product)
+            
+        session.commit()
+        conn.close()
+        os.remove(tmp_path)
+        
+        return {"ok": True, "message": f"Se han importado {len(rows)} productos exitosamente."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Descargar Copia de Seguridad de la Base de Historial de Compras (compras.db)
 @app.get("/api/admin/backup/compras")
 def download_compras_db(authorized: bool = Depends(verify_admin)):
