@@ -38,6 +38,7 @@ class Product(SQLModel, table=True):
     additional_info: Dict[str, Any] = Field(sa_column=Column(JSON))
     pack_info: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
     marca: Optional[str] = None
+    distincion: Optional[str] = None
     composicion: Optional[str] = None
     cosecha: Optional[str] = None
     region: Optional[str] = None
