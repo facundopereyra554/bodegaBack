@@ -26,6 +26,16 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    import sqlite3
+    try:
+        # Parche de migración: agregar columna si no existe
+        conn = sqlite3.connect("tienda.db")
+        conn.execute("ALTER TABLE product ADD COLUMN distincion VARCHAR;")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+        
     create_db_and_tables()
     yield
 
