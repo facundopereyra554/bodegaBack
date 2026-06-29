@@ -435,7 +435,8 @@ def create_transfer_order(
     
 @app.post("/api/contact")
 def submit_contact_form(form: ContactForm):
-    send_contact_email(form)
+    import threading
+    threading.Thread(target=send_contact_email, args=(form,)).start()
     return {"status": "ok", "message": "Mensaje enviado"}
 
 # --- SEGURIDAD: VERIFICAR TOKEN DE ADMIN ---
