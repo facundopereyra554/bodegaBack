@@ -297,5 +297,8 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
             res_body = response.read()
             print(f"✅ Alerta de WhatsApp enviada al admin.")
             
+    except urllib.error.HTTPError as e:
+        error_msg = e.read().decode('utf-8')
+        print(f"❌ Error HTTP {e.code} de WhatsApp. Detalles de Meta: {error_msg}")
     except Exception as e:
         print(f"❌ Error enviando alerta de WhatsApp al admin: {e}")
