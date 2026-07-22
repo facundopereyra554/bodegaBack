@@ -6,6 +6,8 @@ import secrets
 import hashlib
 import hmac as hmac_module
 import threading
+import sqlite3
+import tempfile
 import mercadopago
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form, Header
@@ -435,7 +437,6 @@ def create_transfer_order(
     
 @app.post("/api/contact")
 def submit_contact_form(form: ContactForm):
-    import threading
     threading.Thread(target=send_contact_email, args=(form,)).start()
     return {"status": "ok", "message": "Mensaje enviado"}
 
@@ -538,8 +539,7 @@ def download_tienda_db(authorized: bool = Depends(verify_admin)):
         return FileResponse(path=file_path, filename="backup_tienda.db", media_type="application/octet-stream")
     raise HTTPException(status_code=404, detail="Base de datos tienda.db no encontrada.")
 
-import sqlite3
-import tempfile
+
 
 # Subir e Importar Base de Datos de Productos
 @app.post("/api/admin/upload-tienda-db")
