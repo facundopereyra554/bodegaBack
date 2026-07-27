@@ -16,6 +16,10 @@ services:
       - ./tienda.db:/app/tienda.db
       - ./compras.db:/app/compras.db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/products || exit 1"]
       interval: 30s
@@ -23,6 +27,16 @@ services:
       retries: 3
     networks:
       - nginx-proxymanager_proxy
+
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: tienda_autoheal
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: always
+
 networks:
   nginx-proxymanager_proxy:
     external: true

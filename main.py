@@ -6,15 +6,17 @@ import secrets
 import hashlib
 import hmac as hmac_module
 import threading
+import time
 import sqlite3
 import tempfile
 import mercadopago
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form, Header
+from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, select, SQLModel
+from sqlalchemy import func
 import csv
 import io
 from typing import List, Dict, Any
@@ -26,15 +28,25 @@ from notifications import send_emails, send_transfer_email, send_contact_email
 
 load_dotenv()
 
+# --- CACHE ---
+products_cache = {
+    "data": None,
+    "timestamp": 0
+}
+CACHE_TTL = 300  # 5 minutos
+
+def invalidate_products_cache():
+    global products_cache
+    products_cache["data"] = None
+    products_cache["timestamp"] = 0
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    import sqlite3
     try:
         # Parche de migración: agregar columna si no existe
-        conn = sqlite3.connect("tienda.db")
-        conn.execute("ALTER TABLE product ADD COLUMN distincion VARCHAR;")
-        conn.commit()
-        conn.close()
+        with sqlite3.connect("tienda.db") as conn:
+            conn.execute("ALTER TABLE product ADD COLUMN distincion VARCHAR;")
+            conn.commit()
     except Exception:
         pass
         
@@ -55,7 +67,7 @@ sdk = mercadopago.SDK(mp_access_token)
 
 mp_webhook_secret = os.getenv("MERCADOPAGO_WEBHOOK_SECRET")
 if not mp_webhook_secret:
-    print("⚠️ MERCADOPAGO_WEBHOOK_SECRET no definido. El webhook aceptará notificaciones sin verificar firma.")
+    print("⚠️ MERCADOPAGO_WEBHOOK_SECRET no definido. Los webhooks serán rechazados por seguridad.")
 
 origins = [
     "https://amanece.ar",
@@ -78,10 +90,23 @@ def get_session():
 
 @app.get("/api/products", response_model=List[Product])
 def get_products(include_inactive: bool = False, session: Session = Depends(get_session)):
+    global products_cache
+    current_time = time.time()
+    
+    # Retornar desde caché si es válido y no pedimos inactivos
+    if not include_inactive and products_cache["data"] is not None and (current_time - products_cache["timestamp"]) < CACHE_TTL:
+        return products_cache["data"]
+
     query = select(Product)
     if not include_inactive:
         query = query.where(Product.is_active == True)
     products = session.exec(query).all()
+    
+    # Actualizar caché
+    if not include_inactive:
+        products_cache["data"] = products
+        products_cache["timestamp"] = current_time
+        
     return products
 
 def calculate_shipping_cost(cp_str: str) -> float:
@@ -229,7 +254,7 @@ def create_preference(cart: Cart, session: Session = Depends(get_session)):
 def verify_webhook_signature(request: Request, data_id: str) -> bool:
     """Verifica la firma HMAC-SHA256 de las notificaciones de MercadoPago."""
     if not mp_webhook_secret:
-        return True  # Si no hay secret configurado, se permite (con warning al inicio)
+        return False  # Si no hay secret configurado, SE RECHAZA siempre.
 
     x_signature = request.headers.get("x-signature", "")
     x_request_id = request.headers.get("x-request-id", "")
@@ -260,7 +285,7 @@ def verify_webhook_signature(request: Request, data_id: str) -> bool:
 
 # --- WEBHOOK MERCADO PAGO ---
 @app.post("/api/webhook")
-async def webhook_mercado_pago(request: Request):
+async def webhook_mercado_pago(request: Request, background_tasks: BackgroundTasks):
     try:
         # 1. Leer datos del webhook (soporta body JSON v2 y query params legacy)
         payment_id = None
@@ -333,9 +358,11 @@ async def webhook_mercado_pago(request: Request):
                                 p_stock = current_pack.get("pack_stock", 0)
                                 current_pack["pack_stock"] = max(0, p_stock - quantity)
                                 product.pack_info = current_pack
-                            product.stock = max(0, product.stock - quantity)
+                            # Descuento atómico usando la columna a nivel base de datos
+                            product.stock = func.max(0, Product.stock - quantity)
                             session.add(product)
                 session.commit()
+                invalidate_products_cache()
 
             # Registrar compra en compras.db
             with Session(engine_compras) as compras_session:
@@ -351,7 +378,7 @@ async def webhook_mercado_pago(request: Request):
                 compras_session.commit()
 
             # Enviar emails en background para no bloquear la respuesta al webhook
-            threading.Thread(target=send_emails, args=(metadata, items, total_paid), daemon=True).start()
+            background_tasks.add_task(send_emails, metadata, items, total_paid)
 
         return {"status": "ok"}
     except HTTPException:
@@ -363,6 +390,7 @@ async def webhook_mercado_pago(request: Request):
 # --- ORDEN DE TRANSFERENCIA ---
 @app.post("/api/create_transfer_order")
 def create_transfer_order(
+    background_tasks: BackgroundTasks,
     cart_data: str = Form(...),    
     file: UploadFile = File(...), 
     session: Session = Depends(get_session)
@@ -400,11 +428,15 @@ def create_transfer_order(
         for v_item in totals["items"]:
             mail_items.append({'quantity': v_item["qty"], 'title': f"{v_item['name']} (Pack)"})
 
-        file_content = file.file.read()
+        # Validar tamaño del archivo al leer por fragmentos (max 5MB)
+        MAX_FILE_SIZE = 5 * 1024 * 1024
+        file_content_arr = bytearray()
         
-        # Validar tamaño del archivo (max 5MB)
-        if len(file_content) > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="El comprobante es demasiado grande. El límite es 5MB.")
+        while chunk := file.file.read(1024 * 1024):  # Leer de a 1MB
+            file_content_arr.extend(chunk)
+            if len(file_content_arr) > MAX_FILE_SIZE:
+                raise HTTPException(status_code=400, detail="El comprobante es demasiado grande. El límite es 5MB.")
+        file_content = bytes(file_content_arr)
 
         # ASENTAR EN LA BASE DE DATOS DE COMPRAS (compras.db)
         with Session(engine_compras) as compras_session:
@@ -425,19 +457,18 @@ def create_transfer_order(
             compras_session.add(purchase)
             compras_session.commit()
 
-        threading.Thread(
-            target=send_transfer_email,
-            args=(user_data, mail_items, round(total_a_pagar, 2), TRANSFER_DISCOUNT_PCT, file_content, file.filename),
-            daemon=True
-        ).start()
+        background_tasks.add_task(
+            send_transfer_email,
+            user_data, mail_items, round(total_a_pagar, 2), TRANSFER_DISCOUNT_PCT, file_content, file.filename
+        )
 
         return {"status": "ok", "message": "Orden recibida", "transfer_id": transfer_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.post("/api/contact")
-def submit_contact_form(form: ContactForm):
-    threading.Thread(target=send_contact_email, args=(form,)).start()
+def submit_contact_form(form: ContactForm, background_tasks: BackgroundTasks):
+    background_tasks.add_task(send_contact_email, form)
     return {"status": "ok", "message": "Mensaje enviado"}
 
 # --- SEGURIDAD: VERIFICAR TOKEN DE ADMIN ---
@@ -500,9 +531,11 @@ def approve_purchase(purchase_id: int, authorized: bool = Depends(verify_admin),
                     if current_pack:
                         current_pack["pack_stock"] = max(0, current_pack.get("pack_stock", 0) - v_item["qty"])
                         product.pack_info = current_pack
-                    product.stock = max(0, product.stock - v_item["qty"])
+                    # Descuento atómico usando func de sqlalchemy
+                    product.stock = func.max(0, Product.stock - v_item["qty"])
                     session.add(product)
             session.commit()
+            invalidate_products_cache()
             
             # Cambiar estado
             purchase.status = "approved"
@@ -589,6 +622,7 @@ def upload_tienda_db(file: UploadFile = File(...), authorized: bool = Depends(ve
             session.add(new_product)
             
         session.commit()
+        invalidate_products_cache()
         conn.close()
         os.remove(tmp_path)
         
@@ -630,6 +664,7 @@ def create_product(product: Product, authorized: bool = Depends(verify_admin), s
     session.add(product)
     session.commit()
     session.refresh(product)
+    invalidate_products_cache()
     return product
 
 @app.put("/api/products/{product_id}")
@@ -650,6 +685,7 @@ def update_product(product_id: int, product_data: Product, authorized: bool = De
     session.add(product_db)
     session.commit()
     session.refresh(product_db)
+    invalidate_products_cache()
     return product_db
 
 @app.delete("/api/products/{product_id}")
@@ -660,16 +696,18 @@ def delete_product(product_id: int, authorized: bool = Depends(verify_admin), se
     
     if product.images:
         for image_path in product.images:
-            if image_path.startswith("/"):
-                image_path = image_path[1:]
-            if os.path.exists(image_path):
-                try:
-                    os.remove(image_path)
-                except Exception:
-                    pass
+            if image_path:
+                filename = os.path.basename(image_path)
+                safe_path = os.path.join("static", "products", filename)
+                if os.path.exists(safe_path):
+                    try:
+                        os.remove(safe_path)
+                    except Exception:
+                        pass
 
     session.delete(product)
     session.commit()
+    invalidate_products_cache()
     return {"ok": True}
 
 @app.post("/api/admin/login")

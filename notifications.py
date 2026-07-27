@@ -261,7 +261,7 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
         
         customer_name = f"{customer_data.get('name', '')} {customer_data.get('last_name', '')}".strip()
         
-        # Asumimos que la plantilla espera 2 variables: {{1}} = Nombre del Cliente y {{2}} = Total Pagado
+        # MODO PRUEBA TEMPORAL EXTREMA: usar la plantilla "hello_world" que no tiene variables
         payload = {
             "messaging_product": "whatsapp",
             "to": admin_num,
@@ -269,23 +269,8 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
             "template": {
                 "name": template_name,
                 "language": {
-                    "code": "es"
-                },
-                "components": [
-                    {
-                        "type": "body",
-                        "parameters": [
-                            {
-                                "type": "text",
-                                "text": customer_name if customer_name else "Cliente"
-                            },
-                            {
-                                "type": "text",
-                                "text": str(total_paid)
-                            }
-                        ]
-                    }
-                ]
+                    "code": "en_US"
+                }
             }
         }
         
