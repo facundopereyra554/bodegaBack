@@ -53,6 +53,7 @@ class Product(SQLModel, table=True):
     servicio_ideal: Optional[str] = None
     peso_caja: Optional[str] = None
     medidas_caja: Optional[str] = None
+    ficha_tecnica: Optional[str] = None
 
 class ProcessedPayment(SQLModel, table=True):
     payment_id: str = Field(primary_key=True)

@@ -45,7 +45,14 @@ async def lifespan(app_instance: FastAPI):
     try:
         # Parche de migración: agregar columna si no existe
         with sqlite3.connect("tienda.db") as conn:
-            conn.execute("ALTER TABLE product ADD COLUMN distincion VARCHAR;")
+            try:
+                conn.execute("ALTER TABLE product ADD COLUMN distincion VARCHAR;")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE product ADD COLUMN ficha_tecnica VARCHAR;")
+            except Exception:
+                pass
             conn.commit()
     except Exception:
         pass
@@ -57,6 +64,7 @@ app = FastAPI(lifespan=lifespan)
 
 # Montamos la carpeta estática para servir tanto imágenes como archivos cargados
 os.makedirs("static/products", exist_ok=True)
+os.makedirs("static/fichas", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 mp_access_token = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
@@ -713,3 +721,25 @@ def delete_product(product_id: int, authorized: bool = Depends(verify_admin), se
 @app.post("/api/admin/login")
 def admin_login_check(authorized: bool = Depends(verify_admin)):
     return {"status": "ok"}
+
+# --- ENDPOINT UPLOAD FICHA TÉCNICA ---
+@app.post("/api/admin/upload-ficha")
+async def upload_ficha(
+    file: UploadFile = File(...),
+    x_admin_token: str = Header(None)
+):
+    valid_token = os.getenv("ADMIN_TOKEN", "admin123")
+    if x_admin_token != valid_token:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
+
+    ext = os.path.splitext(file.filename)[1]
+    new_filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join("static", "fichas", new_filename)
+    
+    with open(filepath, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    return {"path": f"/static/fichas/{new_filename}"}

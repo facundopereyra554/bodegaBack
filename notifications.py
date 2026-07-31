@@ -261,7 +261,21 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
         
         customer_name = f"{customer_data.get('name', '')} {customer_data.get('last_name', '')}".strip()
         
-        # MODO PRUEBA TEMPORAL EXTREMA: usar la plantilla "hello_world" que no tiene variables
+        # Armar un string resumido de los productos (separados por coma)
+        items_str = ", ".join([f"{i.get('quantity', 1)}x {i.get('title', 'Producto')}" for i in items])
+        
+        # Combinar dirección y código postal en una sola variable para no exceder las variables
+        address_str = customer_data.get('address', 'No provisto')
+        zip_code_str = customer_data.get('zip_code', '')
+        full_address = f"{address_str} (CP: {zip_code_str})" if zip_code_str else address_str
+
+        # La plantilla ahora esperará 6 variables:
+        # {{1}} = Nombre
+        # {{2}} = Total Pagado
+        # {{3}} = WhatsApp del cliente
+        # {{4}} = Email
+        # {{5}} = Dirección
+        # {{6}} = Resumen de productos
         payload = {
             "messaging_product": "whatsapp",
             "to": admin_num,
@@ -269,8 +283,39 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
             "template": {
                 "name": template_name,
                 "language": {
-                    "code": "en_US"
-                }
+                    "code": os.getenv("WHATSAPP_TEMPLATE_LANG", "es")
+                },
+                "components": [
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {
+                                "type": "text",
+                                "text": customer_name if customer_name else "Cliente"
+                            },
+                            {
+                                "type": "text",
+                                "text": str(total_paid)
+                            },
+                            {
+                                "type": "text",
+                                "text": customer_data.get('whatsapp', 'No provisto')
+                            },
+                            {
+                                "type": "text",
+                                "text": customer_data.get('email', 'No provisto')
+                            },
+                            {
+                                "type": "text",
+                                "text": full_address
+                            },
+                            {
+                                "type": "text",
+                                "text": items_str[:800] if items_str else "Sin detalles" # Límite de caracteres
+                            }
+                        ]
+                    }
+                ]
             }
         }
         
