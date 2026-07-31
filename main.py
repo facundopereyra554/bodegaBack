@@ -196,6 +196,9 @@ def calculate_cart_totals(cart_items: List[CartItem], zip_code: str, session: Se
 # --- ENDPOINT MERCADO PAGO ---
 @app.post("/api/create_preference")
 def create_preference(cart: Cart, session: Session = Depends(get_session)):
+    if get_store_settings().get("isStorePaused", False):
+        raise HTTPException(status_code=400, detail="La tienda se encuentra temporalmente pausada.")
+        
     totals = calculate_cart_totals(cart.items, cart.zip_code, session)
     
     preference_items = []
@@ -403,6 +406,9 @@ def create_transfer_order(
     file: UploadFile = File(...), 
     session: Session = Depends(get_session)
 ):
+    if get_store_settings().get("isStorePaused", False):
+        raise HTTPException(status_code=400, detail="La tienda se encuentra temporalmente pausada.")
+
     try:
         data = json.loads(cart_data)
         items_data = data.get("items", [])
@@ -726,12 +732,8 @@ def admin_login_check(authorized: bool = Depends(verify_admin)):
 @app.post("/api/admin/upload-ficha")
 async def upload_ficha(
     file: UploadFile = File(...),
-    x_admin_token: str = Header(None)
+    authorized: bool = Depends(verify_admin)
 ):
-    valid_token = os.getenv("ADMIN_TOKEN", "admin123")
-    if x_admin_token != valid_token:
-        raise HTTPException(status_code=401, detail="No autorizado")
-
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Solo se permiten archivos PDF.")
 
@@ -743,3 +745,25 @@ async def upload_ficha(
         shutil.copyfileobj(file.file, buffer)
         
     return {"path": f"/static/fichas/{new_filename}"}
+
+# --- STORE SETTINGS (PAUSA DE TIENDA) ---
+STORE_SETTINGS_FILE = "store_settings.json"
+
+def get_store_settings():
+    if os.path.exists(STORE_SETTINGS_FILE):
+        try:
+            with open(STORE_SETTINGS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"isStorePaused": False}
+
+@app.get("/api/settings")
+def api_get_settings():
+    return get_store_settings()
+
+@app.put("/api/admin/settings")
+def api_update_settings(settings: dict, authorized: bool = Depends(verify_admin)):
+    with open(STORE_SETTINGS_FILE, "w") as f:
+        json.dump(settings, f)
+    return {"status": "ok"}
