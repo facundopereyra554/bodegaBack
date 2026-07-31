@@ -97,7 +97,19 @@ def get_session():
 # Startup se maneja con lifespan (ver arriba)
 
 @app.get("/api/products", response_model=List[Product])
-def get_products(include_inactive: bool = False, session: Session = Depends(get_session)):
+def get_products(
+    include_inactive: bool = False,
+    session: Session = Depends(get_session),
+    x_admin_token: str = Header(None)
+):
+    # --- BLOQUEO DE TIENDA ---
+    # Si la tienda está pausada y NO es una request del admin, devolvemos error
+    if not include_inactive and get_store_settings().get("isStorePaused", False):
+        admin_pass = os.getenv("ADMIN_PASSWORD")
+        is_admin = admin_pass and x_admin_token and secrets.compare_digest(x_admin_token, admin_pass)
+        if not is_admin:
+            raise HTTPException(status_code=503, detail="La tienda se encuentra temporalmente pausada.")
+
     global products_cache
     current_time = time.time()
     
