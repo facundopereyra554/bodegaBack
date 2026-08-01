@@ -247,10 +247,11 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
     Envía un mensaje de WhatsApp al administrador usando la API oficial de Meta (Cloud API).
     Requiere una plantilla aprobada.
     """
-    token = os.getenv("WHATSAPP_API_TOKEN")
-    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-    admin_num = os.getenv("ADMIN_WHATSAPP_NUMBER")
-    template_name = os.getenv("WHATSAPP_TEMPLATE_NAME")
+    token = os.getenv("WHATSAPP_API_TOKEN", "").strip()
+    phone_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+    admin_num = os.getenv("ADMIN_WHATSAPP_NUMBER", "").strip()
+    template_name = os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip()
+    template_lang = os.getenv("WHATSAPP_TEMPLATE_LANG", "es").strip()
     
     if not all([token, phone_id, admin_num, template_name]):
         print("⚠️ Faltan credenciales de WhatsApp en .env. Omitiendo mensaje de WhatsApp.")
@@ -283,7 +284,7 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
             "template": {
                 "name": template_name,
                 "language": {
-                    "code": os.getenv("WHATSAPP_TEMPLATE_LANG", "es")
+                    "code": template_lang
                 },
                 "components": [
                     {
@@ -299,15 +300,15 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
                             },
                             {
                                 "type": "text",
-                                "text": customer_data.get('whatsapp', 'No provisto')
+                                "text": customer_data.get('whatsapp') or 'No provisto'
                             },
                             {
                                 "type": "text",
-                                "text": customer_data.get('email', 'No provisto')
+                                "text": customer_data.get('email') or 'No provisto'
                             },
                             {
                                 "type": "text",
-                                "text": full_address
+                                "text": full_address or 'No provisto'
                             },
                             {
                                 "type": "text",
@@ -317,11 +318,11 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
                     }
                 ]
             }
-        }
-        
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), method='POST')
         req.add_header('Authorization', f'Bearer {token}')
         req.add_header('Content-Type', 'application/json')
+        
+        print(f"ℹ️ Enviando payload a WhatsApp: {json.dumps(payload, indent=2)}")
         
         with urllib.request.urlopen(req) as response:
             res_body = response.read()
