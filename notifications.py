@@ -291,26 +291,32 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
                         "type": "body",
                         "parameters": [
                             {
+                                "parameter_name": "cliente",
                                 "type": "text",
                                 "text": customer_name if customer_name else "Cliente"
                             },
                             {
+                                "parameter_name": "total",
                                 "type": "text",
                                 "text": str(total_paid)
                             },
                             {
+                                "parameter_name": "tel",
                                 "type": "text",
                                 "text": customer_data.get('whatsapp') or 'No provisto'
                             },
                             {
+                                "parameter_name": "email",
                                 "type": "text",
                                 "text": customer_data.get('email') or 'No provisto'
                             },
                             {
+                                "parameter_name": "direccion",
                                 "type": "text",
                                 "text": full_address or 'No provisto'
                             },
                             {
+                                "parameter_name": "pedido",
                                 "type": "text",
                                 "text": items_str[:800] if items_str else "Sin detalles" # Límite de caracteres
                             }
