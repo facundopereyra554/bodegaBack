@@ -318,6 +318,7 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
                     }
                 ]
             }
+        }
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), method='POST')
         req.add_header('Authorization', f'Bearer {token}')
         req.add_header('Content-Type', 'application/json')
