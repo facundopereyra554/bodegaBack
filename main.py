@@ -400,6 +400,7 @@ async def webhook_mercado_pago(request: Request, background_tasks: BackgroundTas
                 compras_session.add(purchase)
                 compras_session.commit()
 
+            metadata["payment_method"] = "MercadoPago"
             # Enviar emails en background para no bloquear la respuesta al webhook
             background_tasks.add_task(send_emails, metadata, items, total_paid)
 
@@ -483,6 +484,7 @@ def create_transfer_order(
             compras_session.add(purchase)
             compras_session.commit()
 
+        user_data["payment_method"] = "Transferencia Bancaria"
         background_tasks.add_task(
             send_transfer_email,
             user_data, mail_items, round(total_a_pagar, 2), TRANSFER_DISCOUNT_PCT, file_content, file.filename

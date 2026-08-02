@@ -316,6 +316,11 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
                                 "text": full_address or 'No provisto'
                             },
                             {
+                                "parameter_name": "metod",
+                                "type": "text",
+                                "text": customer_data.get('payment_method') or 'No especificado'
+                            },
+                            {
                                 "parameter_name": "pedido",
                                 "type": "text",
                                 "text": items_str[:800] if items_str else "Sin detalles" # Límite de caracteres
