@@ -75,7 +75,7 @@ sdk = mercadopago.SDK(mp_access_token)
 
 mp_webhook_secret = os.getenv("MERCADOPAGO_WEBHOOK_SECRET")
 if not mp_webhook_secret:
-    print("⚠️ MERCADOPAGO_WEBHOOK_SECRET no definido. Los webhooks serán rechazados por seguridad.")
+    print("MERCADOPAGO_WEBHOOK_SECRET no definido. Los webhooks serán rechazados por seguridad.")
 
 origins = [
     "https://amanece.ar",
@@ -341,7 +341,7 @@ async def webhook_mercado_pago(request: Request, background_tasks: BackgroundTas
 
         # 2. Verificar firma HMAC
         if not verify_webhook_signature(request, payment_id):
-            print(f"⚠️ Webhook con firma inválida rechazado. Payment ID: {payment_id}")
+            print(f"Webhook con firma inválida rechazado. Payment ID: {payment_id}")
             raise HTTPException(status_code=401, detail="Firma inválida")
 
         # 3. Idempotencia: verificar si ya se procesó
@@ -407,7 +407,7 @@ async def webhook_mercado_pago(request: Request, background_tasks: BackgroundTas
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error en webhook: {e}")
+        print(f"Error en webhook: {e}")
         return {"status": "error", "detail": str(e)}
 
 # --- ORDEN DE TRANSFERENCIA ---

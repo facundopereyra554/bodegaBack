@@ -34,15 +34,15 @@ def test_hello_world():
         
         with urllib.request.urlopen(req) as response:
             res_body = response.read()
-            print(f"✅ ¡ÉXITO! Mensaje enviado correctamente.")
+            print(f"¡ÉXITO! Mensaje enviado correctamente.")
             print(f"Respuesta de Meta: {res_body.decode('utf-8')}")
             print("¡Revisa tu WhatsApp personal!")
             
     except urllib.error.HTTPError as e:
         error_msg = e.read().decode('utf-8')
-        print(f"❌ Error HTTP {e.code} de Meta. Detalles: {error_msg}")
+        print(f"Error HTTP {e.code} de Meta. Detalles: {error_msg}")
     except Exception as e:
-        print(f"❌ Error interno: {e}")
+        print(f"Error interno: {e}")
 
 if __name__ == "__main__":
     print("Iniciando prueba con hello_world...")

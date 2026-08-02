@@ -94,19 +94,19 @@ def send_emails(metadata, items, total_paid):
         
         try:
             server.send_message(msg)
-            print(f"✅ Correo enviado al cliente: {customer_email}")
+            print(f"Correo enviado al cliente: {customer_email}")
         except Exception as e:
-            print(f"❌ Error enviando email al cliente: {e}")
+            print(f"Error enviando email al cliente: {e}")
         
         try:
             server.send_message(msg_admin)
-            print(f"✅ Alerta enviada al admin.")
+            print(f"Alerta enviada al admin.")
         except Exception as e:
-            print(f"❌ Error enviando alerta admin: {e}")
+            print(f"Error enviando alerta admin: {e}")
         
         server.quit()
     except Exception as e:
-        print(f"❌ Error conectando al servidor SMTP: {e}")
+        print(f"Error conectando al servidor SMTP: {e}")
     
     # Enviar alerta por WhatsApp (fuera del bloque SMTP)
     send_whatsapp_admin_alert(metadata, items, total_paid)
@@ -254,7 +254,7 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
     template_lang = os.getenv("WHATSAPP_TEMPLATE_LANG", "es").strip()
     
     if not all([token, phone_id, admin_num, template_name]):
-        print("⚠️ Faltan credenciales de WhatsApp en .env. Omitiendo mensaje de WhatsApp.")
+        print("Faltan credenciales de WhatsApp en .env. Omitiendo mensaje de WhatsApp.")
         return
         
     try:
@@ -329,14 +329,14 @@ def send_whatsapp_admin_alert(customer_data, items, total_paid):
         req.add_header('Authorization', f'Bearer {token}')
         req.add_header('Content-Type', 'application/json')
         
-        print(f"ℹ️ Enviando payload a WhatsApp: {json.dumps(payload, indent=2)}")
+        print(f"Enviando payload a WhatsApp: {json.dumps(payload, indent=2)}")
         
         with urllib.request.urlopen(req) as response:
             res_body = response.read()
-            print(f"✅ Alerta de WhatsApp enviada al admin.")
+            print(f"Alerta de WhatsApp enviada al admin.")
             
     except urllib.error.HTTPError as e:
         error_msg = e.read().decode('utf-8')
-        print(f"❌ Error HTTP {e.code} de WhatsApp. Detalles de Meta: {error_msg}")
+        print(f"Error HTTP {e.code} de WhatsApp. Detalles de Meta: {error_msg}")
     except Exception as e:
-        print(f"❌ Error enviando alerta de WhatsApp al admin: {e}")
+        print(f"Error enviando alerta de WhatsApp al admin: {e}")
